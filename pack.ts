@@ -43,7 +43,7 @@ enum PACK {
     // - 0x30: reserved
 
     // 0xf0 - 0xfc: reserved
-    // FLAG = 0xfd,
+    FLAG = 0xfd,
     SYNTAX_ERROR = 0xfe,
     RETURN = 0xff,
 }
@@ -96,15 +96,13 @@ export class JsBinPack {
         this.definedSymbolsById.set(id, symbol);
         this.definedSymbolsBySymbol.set(symbol, id);
     }
-    public extendedKeyMode = false;
-    public directKeyMode = false;
     pack(data: unknown): Uint8Array {
         const packer = new Packer(this);
-        packer.packValue(data, 0);
+        packer.packValue(data);
         return new Uint8Array();
     }
     unpack(data: Uint8Array): unknown {
-        return true;
+        return data;
     }
 }
 
@@ -114,12 +112,17 @@ class Packer {
     }
     readonly result: (Uint8Array | string | number)[] = [];
 
-    readonly propertyKeys = new Map<string, Uint8Array>();
-    readonly propertyKeyIds = new Map<string, number>();
+    private propertyEnumerator = 0;
+    private valueEnumerator = 0;
+    readonly propertyKeys = new Map<string, {
+        buf: Uint8Array,
+        usage: number,
+        id: number,
+    }>();
 
     readonly packed = new Map<unknown, number>();
 
-    packValue(value: unknown, valueId: number) {
+    packValue(value: unknown) {
         if ((typeof value === "string" && value.length > 5) || typeof value === "object") {
             if (this.packed.has(value)) {
                 const ref = this.packed.get(value)!;
@@ -129,8 +132,10 @@ class Packer {
                 dv.setUint32(1, ref);
                 this.result.push(res);
                 return;
+            } else {
+                this.packed.set(value, this.valueEnumerator);
+                this.valueEnumerator++;
             }
-            this.packed.set(value, valueId);
         }
 
         switch (typeof value) {
@@ -168,36 +173,53 @@ class Packer {
                 if (value === null) {
                     this.result.push(PACK.NULL);
                 } else {
-                    if (value instanceof Array) {
-                        // return packArray(obj, packed, offset);
-                    } else if (value instanceof Uint8Array) {
+                    if (value instanceof Array) { // array
+                        this.result.push(PACK.ARRAY);
+                        for (const i of value) {
+                            this.packValue(i);
+                        }
+                        this.result.push(PACK.RETURN);
+                    } else if (value instanceof Uint8Array) { // Uint8Array
                         this.pushBuffer(value, PACK.UINT8_ARRAY8, PACK.UINT8_ARRAY16, PACK.UINT8_ARRAY32);
-                    } else if (value instanceof ArrayBuffer) {
+                    } else if (value instanceof ArrayBuffer) { // ArrayBuffer
                         this.pushBuffer(new Uint8Array(value), PACK.ARRAY_BUFFER8, PACK.ARRAY_BUFFER16, PACK.ARRAY_BUFFER32);
-                    } else if (value instanceof Map) {
-                        // return packMap(obj, packed, offset);
-                    } else if (value instanceof Set) {
-                        // return packSet(obj, packed, offset);
-                    } else {
+                    } else if (value instanceof Map) { // Map
+                        this.result.push(PACK.MAP);
+                        for (const [k, v] of value) {
+                            this.packValue(k);
+                            this.packValue(v);
+                        }
+                        this.result.push(PACK.RETURN);
+                    } else if (value instanceof Set) { // Set
+                        this.result.push(PACK.SET);
+                        for (const i of value) {
+                            this.packValue(i);
+                        }
+                        this.result.push(PACK.RETURN);
+                    } else { // object
                         this.result.push(PACK.OBJECT);
-                        let propertyValueId = valueId;
                         for (const itemId in value) {
-                            if (!this.propertyKeys.has(itemId)) {
+                            if (this.propertyKeys.has(itemId)) {
+                                const key = this.propertyKeys.get(itemId)!;
+                                key.usage++;
+                            } else {
                                 const propLabel = new TextEncoder().encode(itemId);
-                                if (propLabel.length >= PACK.RETURN) {
+                                if (propLabel.length >= 0xff) {
                                     console.warn(`[JsBinPack]: property key too long, skipping`);
                                     continue;
                                 }
-                                this.propertyKeys.set(itemId, propLabel);
-
+                                this.propertyKeys.set(itemId, {
+                                    buf: propLabel,
+                                    usage: 1,
+                                    id: this.propertyEnumerator,
+                                });
+                                this.propertyEnumerator++;
                             }
                             this.result.push(itemId);
                             // @ts-expect-error is index
                             const propertyValue = value[itemId];
 
-                            propertyValueId++;
-                            this.packValue(propertyValue, propertyValueId);
-
+                            this.packValue(propertyValue);
                         }
                         this.result.push(PACK.RETURN);
                     }
@@ -208,30 +230,24 @@ class Packer {
                 this.result.push(PACK.INVALID);
                 break;
             }
+
         }
+        return;
     }
 
-    private packObject(obj: object, valueId: number) {
-
-    }
-
-    private packArray(arr: Array<unknown>, valueId: number) {
-
-    }
-
-    private pushBuffer(input: Uint8Array, short: number, long: number, longLong: number) {
+    private pushBuffer(input: Uint8Array, u8index: number, u16index: number, u32index: number) {
         if (input.length <= 0xff) {
-            this.result.push(short, input.length);
+            this.result.push(u8index, input.length);
         } else if (input.length <= 0xffff) {
             const res = new Uint8Array(3);
-            res[0] = long;
+            res[0] = u16index;
             const dv = new DataView(res.buffer);
             dv.setUint16(1, input.length);
             res.set(input, 3);
             this.result.push(res);
         } else {
             const res = new Uint8Array(5);
-            res[0] = longLong;
+            res[0] = u32index;
             const dv = new DataView(res.buffer);
             dv.setUint32(1, input.length);
             res.set(input, 5);
@@ -240,12 +256,24 @@ class Packer {
         this.result.push(input);
     }
 
+    private propertyKeyRefs = new Map<string, number[]>();
+
     packKeyTable() {
         const table = new GrowableUint8Array();
-        for (const key of this.propertyKeys) {
-            const keyBin = new TextEncoder().encode(key);
-            table.push(keyBin.length);
-            table.push(keyBin);
+        let i = 0;
+        const extendedMode = this.propertyKeys.size >= 0xff;
+        if (extendedMode) {
+            const header = new Uint8Array(3);
+            new DataView(header.buffer).setUint16(1, this.propertyKeys.size);
+            this.result.push(header);
+        } else {
+            this.result.push(this.propertyKeys.size);
+        }
+        for (const [key, keyBin] of this.propertyKeys) {
+            table.push(keyBin.buf.length);
+            table.push(keyBin.buf);
+            this.propertyKeyRefs.set(key, i);
+            i++;
         }
         return table;
     }
