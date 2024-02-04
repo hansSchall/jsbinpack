@@ -1,5 +1,8 @@
 # Protocol definition
 
+> Not ready yet
+
+<!--
 Unless otherwise noted, Big Endian is used
 
 ## General Frame format
@@ -116,3 +119,4 @@ Identical to ArrayBuffer using `PACK.STRING8`, `PACK.STRING16` and
 `PACK.STRING32`
 
 Data is UTF-8 encoded.
+-->

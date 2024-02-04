@@ -1,117 +1,215 @@
 # JsBinPack
 
-Small and efficient alternative to JSON. Supporting Sets, Maps, TypedArrays,
-circular and non-circular references. Small footprint (usually two bytes
-overhead per value, some values like booleans are single-byte) while being
-suitable for huge amounts of data (designed to handle 10GB as well as 10bytes)
+JsBinPack is a small and efficient dependency-free alternative to JSON
+supporting Sets, Maps, TypedArrays, circular and non-circular references.
+
+It has a small output (0 - 2 bytes overhead per value) while being suitable for
+huge amounts of data (designed to handle 10GB as well as 10bytes)
 
 ## Usage
 
+### Deno.js:
+
 ```typescript
-const serialized = new JsBinPack().pack(data);
-const deserialized = new JsBinPack().unpack(serialized);
+import { JsBinPack } from "https://deno.land/x/jsbinpack/mod.ts";
+
+const serialized: Uint8Array = new JsBinPack().pack(data);
+const deserialized: unknown = new JsBinPack().unpack(serialized);
+```
+
+### Yarn: Node.js & Browser:
+
+```bash
+yarn add jsbinpack
+```
+
+```typescript
+import { JsBinPack } from "jsbinpack";
+
+const serialized: Uint8Array = new JsBinPack().pack(data);
+const deserialized: unknown = new JsBinPack().unpack(serialized);
+```
+
+### NPM: Node.js & Browser:
+
+```bash
+npm install jsbinpack
+```
+
+```typescript
+import { JsBinPack } from "jsbinpack";
+
+const serialized: Uint8Array = new JsBinPack().pack(data);
+const deserialized: unknown = new JsBinPack().unpack(serialized);
 ```
 
 ## Supports everything JSON does, plus:
 
-- Sets
-- Maps
-- Symbols
-- TypedArrays
-- ArrayBuffers
-- null & undefined
-- references (every object is only packed once, this also applies to primitives
-  like strings)
-- Circular references
-- options to customize packing
+- `Set`s
+- `Map`s
+- `Symbol`s
+- `TypedArray`s
+- `ArrayBuffer`s
+- `null` & `undefined`
+- references inside the message (every object is only packed once, this also
+  applies to primitives like strings, which saves space if they occur
+  repeatedly)
+- Circular(!) references
+- Consistency: each message starts with a 2-byte version header which allows
+  making even breaking changes to the protocol and reduces backward
+  compatibility overhead
+- Extendability: special flags can be embedded inside the data to adjust the
+  unpacking behavior
 
 ## Performance
 
-- Binary format: uses all possible values, not only a few printable characters
-- (potentially) large amounts of data are only used through TypedArrays and are
+- Binary format: uses all possible values, not only a few printable characters,
+  no need to transform binary content
+- potentially large amounts of data are only used through TypedArrays and are
   copied only once (to the result buffer)
 - long object keys don't affect performance and size (they are only stored once,
   see [property key table](#property-key-table))
-- no magic codes (like `"` in JSON) => no need to escape every byte when
-  encoding
-- no escape overhead when packing a valid message (Imagine JSON:
+- no magic codes (like `"` in JSON which causes a 2x(!) performance regression
+  when repeatedly contained in string)
+- => no need to escape every byte when encoding
+- => no escape overhead when packing a valid message (Imagine JSON:
   `"{\"foo\": \"test\"}"`)
-- different variants for storing different value ranges (eg. for string length:
-  u8 for short strings, u16 for medium ones and u32 for huge ones (=4GB))
+- different variants for storing different value ranges (number types range from
+  uint8 to float64, data block length can be expressed as u8 (up to 256 bytes),
+  u16 (up to 64kB), u32 (up to 4GB), u64 (up to 18Exabytes))
 
-## Limits
+## Implementation benchmarks
+
+Currently JsBinPack cannot compete with the builtin (C/C++) implementation of
+JSON when it comes to extremely small messages (around 10 times slower when
+packing a one-character string).
+
+This bad performance is mainly caused by the bad performance of the
+browser-builtin UTF-8 encoder/decoder (The Encoding API itself is many times
+slower than using JSON). This needs to be considered if you plan to transmit or
+store the JSON message, because this also involves the Encoding API, which
+nearly eliminates any performance advantages of the builtin JSON again.
+
+Packing big or complicated (escape and non-ASCII characters) messages is way
+faster and results in a smaller output.
+
+## Protocol / Implementation limits
 
 - maximum object key length: 255 bytes UTF-8 (should be unreachable, you are
   most likely abusing objects as key-value-storage, use Maps instead)
-- Number of different object keys (across all objects): 255 (default) / 65,534
-  (with `extendedKeyMode` enabled)
-- Maximum length of strings, TypedArrays and ArrayBuffers: 4,294,967,295 bytes
-  (4GB)
-- Number of Values (primitives, objects and arrays): 4,294,967,295
-- theoretical maximum payload: 18.4 Exabytes (the JS-Implementation is limited
-  to 9 Petabytes due to the integer size limit), untested 😏
+- Number of different object keys (across all objects): 65535 (0xffff). Using
+  less than 253 saves a little bit space in the message
+- Maximum length of strings, TypedArrays and ArrayBuffers:
+  18,446,744,073,709,552,000 bytes (~18.5 Exabytes)
+- Maximum number of strings and objects (includes arrays, maps, sets,
+  ArrayBuffer, ...): 4,294,967,295 (u32 limit)
+- maximum payload: difficult to calculate, but somewhere in the magnitude of
+  10^29 bytes (to store this amount of data you need your FS / RAM having
+  128bit-addressing mode)
+- the TS/JS-Implementation is limited to 9 Petabytes due to the integer size
+  limit. Please let me know if you have the ability to test this use case 😏
 
-## Property key table
+## Advanced usage
+
+```typescript
+class JsBinPack{
+  pack(data: unknown): Uint8Array,
+  unpack(data: Uint8Array): unknown,
+}
+```
+
+The instance of `JsBinPack` can be reused. It is used to hold the configuration
+to handle symbols [coming soon]
+
+## Errors
+
+The `pack`/`unpack` methods may throw errors.
+
+You should ALWAYS handle them, they can be caused by a single malformed message.
+
+They all extend `JsBinPackError` which extends `Error`
+
+### `JsBinPackUnsupportedVersionError`
+
+The used protocol version is not supported
+
+### `JsBinPackUnsupportedTypeError`
+
+The message contains an unsupported data type. This cannot be ignored, because
+without knowledge of the data type the beginning of the following data block is
+unknown.
+
+### `JsBinPackMalformedError`
+
+Should be self explaining
+
+### `JsBinPackLimitError`
+
+One or more limits are exceeded
+
+## Data Validation
+
+_**ALWAYS VALIDATE**_ the incoming data. _**DO NOT TRUST**_ its structure.
+
+When using TypeScript, _**DO NOT USE**_ the `as` operator, this is _**UNSAFE**_.
+Use full type checks.
+
+Do this either manually (not recommended) or using a library like
+[zod](https://zod.dev/) (recommended) or
+[TypeBox](https://github.com/sinclairzx81/typebox)
+
+## How does this all work?
+
+### Property key table
 
 This technique eliminates repeated object keys by storing a list of all object
-keys and just referencing this list. Given this object:
+keys at the beginning of the message and just referencing this list. This lets
+you freely choose clear and self-explaining property names. Feel free to use
+structs like this even when having large lists:
 
 ```js
 [
   {
-    "value": 5,
-    "display-label": "Foo",
+    uuid: "...",
+    displayName: "Foo",
   },
   {
-    "value": 8,
-    "display-label": "Bar",
+    uuid: "...",
+    displayName: "Bar",
   },
-];
+  ...
+]
 ```
 
-The JSON version is
-`[{"value":5,"display-label":"Foo"},{"value":8,"display-label":"Bar"}]` (69
-bytes)
+### References
 
-The jsbinpack version is:
-`02 00 02 05 76 61 6c 75 65 0d 64 69 73 70 6c 61 79 2d 6c 61 62 65 6c 0C 0B 00 08 05 01 10 03 46 6f 6f FF 0B 00 08 08 01 10 03 42 61 72 FF FF`
-(47 bytes / 31% saved)
+The packing algorithm memorizes all packed values. If it detects a repeated
+occurrence of the same value it just stores a pointer to that value
 
-Explanation:
+This lets you directly serialize your internal data format with all its
+cross-references.
 
-- `02 00`: Protocol version 2.0
-- `02`: key table has 0x02 = 2 items
-- `05`: following key is 0x05 = 5 bytes long (#1)
-- `76 61 6c 75 65`: UTF-8 representation of `value` (#1)
-- `05`: following key is 0x0d = 13 bytes long (#2)
-- `64 69 73 70 6c 61 79 2d 6c 61 62 65 6c`: UTF-8 representation of
-  `display-label` (#2)
-- `0C`: Array (#3)
-- `0B`: Object (#4)
-- `00`: key 0 (`value`) (#1)
-- `08`: 8-bit unsigned int
-- `05`: u8 representation of `5`
-- `01`: key 1 (`display-label`) (#2)
-- `10`: string (8bit length mode)
-- `03`: length (u8)
-- `46 6f 6f`: UTF-8 representation of `Foo`
-- `FF`: end mark (of object) (#4)
-- `0B ...`: second object (#5)
-- `FF`: end mark (of object) (#5)
-- `FF`: end mark (of array) (#3)
+### Huge amounts of data
 
-#### Options
+Pure data chunks (like strings, ArrayBuffers, ...) aren't touched at a
+per-byte-basis, they are just copied to the output buffer. Instead of defining
+escape codes (which would need to be escaped themselves) the length of the
+following block is stored in a format that suits it best (u8,u16,u32 or u64).
+This enables compact messages when using buffers that are only a few byte long
+while being capable of handling Exabytes of data.
 
-##### `extendedKeyMode`
+## License
 
-The reference to the property key is stored as u8 by default. This allows a
-maximum of 255 different keys (value 0xff is reserved).
+Copyright (C) 2024 Hans Schallmoser
 
-Setting this property to true will use u16 as index. This allows 65,534
-different object keys at the cost of 2 bytes overhead per message and 1 byte per
-object key.
+This program is free software: you can redistribute it and/or modify it under
+the terms of the GNU General Public License as published by the Free Software
+Foundation, either version 3 of the License, or (at your option) any later
+version.
 
-##### `directKeyMode`
+This program is distributed in the hope that it will be useful, but WITHOUT ANY
+WARRANTY; without even the implied warranty of MERCHANTABILITY or FITNESS FOR A
+PARTICULAR PURPOSE. See the GNU General Public License for more details.
 
-This options disables the property key table entirely. Saves 1 byte per object
-property if all object keys are used only once.
+You should have received a copy of the GNU General Public License along with
+this program. If not, see <https://www.gnu.org/licenses/>.
