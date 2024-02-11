@@ -3,8 +3,9 @@
 JsBinPack is a small and efficient dependency-free alternative to JSON
 supporting Sets, Maps, TypedArrays, circular and non-circular references.
 
-It has a small output (0 - 2 bytes overhead per value) while being suitable for
-huge amounts of data (designed to handle 10GB as well as 10bytes)
+It has a small output (0 - 2 bytes overhead per value, most of the time much
+less than JSON) while being suitable for huge amounts of data (designed to
+handle 10GB as well as 10bytes)
 
 ## Usage
 
@@ -97,6 +98,7 @@ faster and results in a smaller output.
 
 - maximum object key length: 255 bytes UTF-8 (should be unreachable, you are
   most likely abusing objects as key-value-storage, use Maps instead)
+- object keys may not be a empty string (Yes, this is valid JSON: `{ "": 5 }`)
 - Number of different object keys (across all objects): 65535 (0xffff). Using
   less than 253 saves a little bit space in the message
 - Maximum length of strings, TypedArrays and ArrayBuffers:
@@ -104,10 +106,11 @@ faster and results in a smaller output.
 - Maximum number of strings and objects (includes arrays, maps, sets,
   ArrayBuffer, ...): 4,294,967,295 (u32 limit)
 - maximum payload: difficult to calculate, but somewhere in the magnitude of
-  10^29 bytes (to store this amount of data you need your FS / RAM having
-  128bit-addressing mode)
+  10^29 bytes
 - the TS/JS-Implementation is limited to 9 Petabytes due to the integer size
-  limit. Please let me know if you have the ability to test this use case 😏
+  limit. Please let me know if you have the ability to test this use case 😏.
+  Until this has been tested, using such large amounts of data is considered
+  undefined behavior.
 
 ## Advanced usage
 

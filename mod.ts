@@ -241,6 +241,11 @@ export class JsBinPack {
                         } else { // object
                             stageU8(PACK.OBJECT);
                             for (const itemId in value) {
+                                if (itemId.length === 0) {
+                                    // empty string is used for return mark
+                                    continue;
+                                }
+
                                 if (!propertyKeys.has(itemId)) {
                                     const propLabel = new TextEncoder().encode(itemId);
                                     if (propLabel.length >= 0xff) {
@@ -257,7 +262,8 @@ export class JsBinPack {
 
                                 packValue(propertyValue);
                             }
-                            stageU8(PACK.RETURN);
+                            // return
+                            stagePropRef("");
                         }
                     }
                     break;
@@ -285,7 +291,7 @@ export class JsBinPack {
 
         const dv = new DataView(buffer.buffer);
         dv.setUint8(0, 2); // Version Major
-        dv.setUint8(1, 0); // Version Minor
+        dv.setUint8(1, 1); // Version Minor
 
         if (extendedKeyMode) {
             buffer[2] = 0xff;
@@ -311,18 +317,28 @@ export class JsBinPack {
                 dv.setUint8(offset, item);
                 offset += 1;
             } else if (typeof item === "string") {
-                if (propertyKeyRefs.has(item)) {
-                    const pos = propertyKeyRefs.get(item)!;
-
+                if (item.length === 0) {
                     if (extendedKeyMode) {
-                        dv.setUint16(offset, pos, true);
+                        dv.setUint16(offset, PACK.RETURN);
                         offset += 2;
                     } else {
-                        dv.setUint8(offset, pos);
+                        dv.setUint8(offset, PACK.RETURN);
                         offset += 1;
                     }
                 } else {
-                    console.warn(`[JsBinPack] key ref '${item}' does not exist`);
+                    if (propertyKeyRefs.has(item)) {
+                        const pos = propertyKeyRefs.get(item)!;
+
+                        if (extendedKeyMode) {
+                            dv.setUint16(offset, pos);
+                            offset += 2;
+                        } else {
+                            dv.setUint8(offset, pos);
+                            offset += 1;
+                        }
+                    } else {
+                        console.warn(`[JsBinPack] key ref '${item}' does not exist`);
+                    }
                 }
             } else {
                 buffer.set(item, offset);
@@ -334,12 +350,18 @@ export class JsBinPack {
 
     public unpack(data: Uint8Array): unknown {
         try {
-
             const buffer = data;
             const dv = new DataView(data.buffer);
+
             const versionMajor = dv.getUint8(0);
             const versionMinor = dv.getUint8(1);
-            if (versionMajor !== 2 || versionMinor !== 0) {
+
+            if (versionMajor !== 2 || versionMinor !== 1) {
+                if (versionMajor > 2 || (versionMinor > 1 && versionMajor === 2)) {
+                    console.warn(`[JsBinPack] It seems like you are using an outdated version of JsBinPack, because a packet with a newer protocol version was received`);
+                } else {
+                    console.warn(`[JsBinPack] It seems like your remote is using an outdated version of JsBinPack, because a packet with an outdated protocol version was received`);
+                }
                 throw new JsBinPackUnsupportedVersionError(versionMajor, versionMinor);
             }
 
@@ -478,11 +500,17 @@ export class JsBinPack {
                     case PACK.U64: {
                         const value = dv.getBigUint64(offset);
                         offset += 8;
+                        if (value <= Number.MAX_SAFE_INTEGER || value >= Number.MIN_SAFE_INTEGER) {
+                            return Number(value);
+                        }
                         return value;
                     }
                     case PACK.I64: {
                         const value = dv.getBigInt64(offset);
                         offset += 8;
+                        if (value <= Number.MAX_SAFE_INTEGER || value >= Number.MIN_SAFE_INTEGER) {
+                            return Number(value);
+                        }
                         return value;
                     }
                     case PACK.F64: {
@@ -498,16 +526,10 @@ export class JsBinPack {
                         const result: Record<string, unknown> = {};
                         markForRef(result);
                         while (true) {
-                            let nextKey = dv.getUint8(offset);
+                            const nextKey = extendedKeyMode ? dv.getUint16(offset) : dv.getUint8(offset);
+                            offset += extendedKeyMode ? 2 : 1;
                             if (nextKey === PACK.RETURN) {
-                                offset++;
                                 return result;
-                            }
-                            if (extendedKeyMode) {
-                                nextKey = dv.getUint16(offset, true);
-                                offset += 2;
-                            } else {
-                                offset += 1;
                             }
                             if (propertyKeys.has(nextKey)) {
                                 const key = propertyKeys.get(nextKey)!;
@@ -669,5 +691,11 @@ export class JsBinPack {
             console.error(`[JsBinPack]: unexpected error:`, err);
             throw err;
         }
+    }
+}
+
+function _printMessage(data: Uint8Array) {
+    for (const $ of data) {
+        console.log(`0d${$.toString(10)} 0x${$.toString(16)} (${PACK[$]}) (${String.fromCharCode($)})`);
     }
 }

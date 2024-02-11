@@ -1,0 +1,8 @@
+{
+  "name": "jsbinpack",
+  "version": "1.1.0",
+  "main": "build/mod.js",
+  "repository": "https://github.com/hansSchall/jsbinpack.git",
+  "author": "Hans Schallmoser <99032404+hansSchall@users.noreply.github.com>",
+  "license": "GPL-v3-or-later"
+}

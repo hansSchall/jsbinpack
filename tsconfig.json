@@ -1,0 +1,17 @@
+{
+    "compilerOptions": {
+        "target": "ES2022",
+        "module": "CommonJS",
+        "strict": true,
+        "forceConsistentCasingInFileNames": true,
+        "outDir": "build",
+        "declaration": true,
+    },
+    "include": [
+        "mod.ts"
+    ],
+    "exclude": [
+        "*.bench.ts",
+        "*.test.ts",
+    ]
+}

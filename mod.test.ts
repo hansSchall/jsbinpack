@@ -51,10 +51,15 @@ Deno.test("pack/unpack", () => {
     test(new Uint8Array(256).fill(1), PACK.UINT8_ARRAY16);
     test(new Uint8Array(0xffff + 1).fill(1), PACK.UINT8_ARRAY32);
 
-    // running this test needs at least 8GB free RAM
-    // const packed = instance.pack(new Uint8Array(0xffffffff + 1).fill(1));
-    // assertEquals(packed[packed[2] + 3], PACK.UINT8_ARRAY64);
-    // instance.unpack(packed);
+    // UINT8ARRAY64
+    {
+        // running this test needs at least 8GB free RAM
+        // assertEquals does not support comparing such large objects
+
+        // const packed = instance.pack(new Uint8Array(0xffffffff + 1).fill(1));
+        // assertEquals(packed[packed[2] + 3], PACK.UINT8_ARRAY64);
+        // instance.unpack(packed);
+    }
 
     test(new ArrayBuffer(5), PACK.ARRAY_BUFFER8);
     test(new ArrayBuffer(255), PACK.ARRAY_BUFFER8);
@@ -64,6 +69,26 @@ Deno.test("pack/unpack", () => {
     test([new Uint8Array([40, 2, 97, 98])], PACK.ARRAY);
 
     test({ a: new Uint8Array(255).fill(1) });
+
+    // extendedKeyMode
+    {
+        const obj: Record<string, number> = {};
+        const chars = `ABCDEFGHIJ`.split("");
+        const keys = new Set<string>();
+        for (let i = 0; i < 300; i++) {
+            const key = i
+                .toString(10)
+                .split("")
+                .map($ => chars[+$])
+                .join("");
+
+            keys.add(key);
+            obj[key] = 5;
+        }
+        assertEquals(keys.size, 300);
+
+        test(obj);
+    }
 
     test([
         {
